@@ -1,0 +1,62 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.7'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com'
+version = '0.0.1-SNAPSHOT'
+description = 'StoredProcedure'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+
+    // Spring Boot Core
+    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // JDBC for calling stored procedures
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+
+    // CSV Parser
+    implementation 'com.opencsv:opencsv:5.8'
+
+    // JSON for MySQL (batch stored procedure)
+    implementation 'org.json:json:20240303'
+
+    // Database Drivers
+    implementation 'org.postgresql:postgresql:42.7.3'
+    implementation 'com.mysql:mysql-connector-j:9.1.0'
+    implementation 'com.oracle.database.jdbc:ojdbc11:23.5.0.24.07'
+
+    // Jackson (JSON support)
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.1'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
+    implementation 'io.trino:trino-jdbc:450'
+
+    // Dev tools (optional)
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+    // Testing
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
