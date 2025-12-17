@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -20,16 +19,16 @@ public class TrinoBatchService {
     private String targetDb;
 
     private final TrinoRestExecutor trinoExecutor;
-    private final StoredProcBatchInsertService insertService;
+    private final BatchInsertExecutorResolver executorResolver;
     private final DataSource dataSource;
 
     public TrinoBatchService(
             TrinoRestExecutor trinoExecutor,
-            StoredProcBatchInsertService insertService,
+            BatchInsertExecutorResolver executorResolver,
             DataSource dataSource
     ) {
         this.trinoExecutor = trinoExecutor;
-        this.insertService = insertService;
+        this.executorResolver = executorResolver;
         this.dataSource = dataSource;
     }
 
@@ -72,9 +71,9 @@ public class TrinoBatchService {
 
                         for (String chunk : chunks) {
 
-                            insertService.insertBatch(
-                                    tableName, columns, chunk, targetDb
-                            );
+                            executorResolver
+                                    .resolve(targetDb)
+                                    .insertBatch(txJdbc, tableName, columns, chunk);
 
                             int rows = countRowsInValues(chunk);
                             totalRows += rows;
@@ -83,10 +82,9 @@ public class TrinoBatchService {
                         }
 
                     } else {
-
-                        insertService.insertBatch(
-                                tableName, columns, values, targetDb
-                        );
+                        executorResolver
+                                .resolve(targetDb)
+                                .insertBatch(txJdbc, tableName, columns, values);
 
                         int rows = resp.getData().size();
                         totalRows += rows;
@@ -104,6 +102,7 @@ public class TrinoBatchService {
             }
 
             conn.commit();
+            System.out.println("Total rows inserted = " + totalRows);
             return "FINISHED. Rows inserted = " + totalRows;
 
         } catch (Exception ex) {
@@ -119,7 +118,9 @@ public class TrinoBatchService {
                         targetDb
                 );
             }
+
             System.out.println(ex.getMessage());
+
         } finally {
 
             if (conn != null) {
@@ -127,9 +128,8 @@ public class TrinoBatchService {
                 conn.close();
             }
         }
-        return tableName;
+        return "Finished : " + totalRows ;
     }
-
 
     private String buildColumnBlock(TrinoResponseBean resp) {
         return resp.getColumns().stream()
