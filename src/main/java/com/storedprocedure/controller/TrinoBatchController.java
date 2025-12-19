@@ -9,7 +9,7 @@ public class TrinoBatchController {
 
     private final TrinoBatchService trinoBatchService;
 
-    public TrinoBatchController(TrinoBatchService trinoBatchService) {
+    private TrinoBatchController(TrinoBatchService trinoBatchService) {
         this.trinoBatchService = trinoBatchService;
     }
 

@@ -148,59 +148,6 @@ public class DbUtils {
                 return "TEXT";
         }
     }
-    public static List<String> splitBySqlSize(String valuesBlock, int maxLen) {
-
-        final int ORACLE_DYNAMIC_SQL_LIMIT = 32767;
-
-        List<String> chunks = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-
-        String[] rows = valuesBlock.split("\\),\\(");
-
-        for (String row : rows) {
-
-            String normalized =
-                    (row.startsWith("(") ? row : "(" + row) +
-                            (row.endsWith(")") ? "" : ")");
-
-            if (normalized.length() >= maxLen) {
-
-                if (current.length() > 0) {
-                    chunks.add(current.toString());
-                    current.setLength(0);
-                }
-
-                if (normalized.length() > ORACLE_DYNAMIC_SQL_LIMIT) {
-                    throw new IllegalStateException(
-                            "Row exceeds Oracle hard SQL limit (32K). Length=" +
-                                    normalized.length()
-                    );
-                }
-
-                chunks.add(normalized);
-                continue;
-            }
-
-            if (current.length() == 0) {
-                current.append(normalized);
-            }
-            else if (current.length() + normalized.length() + 1 < maxLen) {
-                current.append(",").append(normalized);
-            }
-            else {
-                chunks.add(current.toString());
-                current.setLength(0);
-                current.append(normalized);
-            }
-        }
-
-        if (current.length() > 0) {
-            chunks.add(current.toString());
-        }
-
-        return chunks;
-    }
-
 
 
     public static void dropTableQuietly(
