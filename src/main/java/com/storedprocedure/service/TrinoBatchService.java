@@ -80,10 +80,8 @@ public class TrinoBatchService {
 
                 if (resp.getData() != null && !resp.getData().isEmpty()) {
 
-                    List<Integer> filterColumns = filterColumns(resp);
-
-                    String columns = buildColumnBlock(resp, filterColumns);
-                    String values  = buildValuesBlock(resp, filterColumns);
+                    String columns = buildColumnBlock(resp, includedIndexes);
+                    String values  = buildValuesBlock(resp, includedIndexes);
 
                     executorResolver
                             .resolve(targetDb)
