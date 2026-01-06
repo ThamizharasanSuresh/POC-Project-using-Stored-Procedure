@@ -21,7 +21,8 @@ import java.util.Map;
 @Service
 public class TrinoBatchService {
 
-    private static final List<String> EXCLUDED_COLUMNS = List.of("ads_id", "ads_ing_sid");
+    private static final List<String> EXCLUDED_COLUMNS =
+            List.of("ads_id", "ads_ing_sid");
 
     @Value("${app.target-db}")
     private String targetDb;
@@ -42,11 +43,13 @@ public class TrinoBatchService {
 
     public String runBatchQuery(String query) throws Exception {
 
-        Instant startTime = Instant.now();
+        Instant jobStart = Instant.now();
 
         Connection conn = null;
         int totalRows = 0;
-        int batchNo = 1;
+        int fetchBatchNo = 0;
+        int insertBatchNo = 1;
+
         String tableName = extractTableName(query);
         boolean tableCreated = false;
 
@@ -54,15 +57,19 @@ public class TrinoBatchService {
             conn = dataSource.getConnection();
             conn.setAutoCommit(false);
 
-            JdbcTemplate txJdbc = new JdbcTemplate(
-                    new SingleConnectionDataSource(conn, true)
-            );
+            JdbcTemplate txJdbc =
+                    new JdbcTemplate(new SingleConnectionDataSource(conn, true));
 
             TrinoResponseBean resp = trinoExecutor.executeInitial(query);
 
             while ((resp.getColumns() == null || resp.getColumns().isEmpty())
                     && resp.getNextUri() != null) {
+
+                Instant fetchStart = Instant.now();
                 resp = trinoExecutor.getNextPage(resp.getNextUri());
+                Instant fetchEnd = Instant.now();
+                log("TRINO FETCH", fetchBatchNo++, fetchStart, fetchEnd,
+                        resp.getData() == null ? 0 : resp.getData().size());
             }
 
             List<Integer> includedIndexes = filterColumns(resp);
@@ -83,42 +90,50 @@ public class TrinoBatchService {
                     String columns = buildColumnBlock(resp, includedIndexes);
                     String values  = buildValuesBlock(resp, includedIndexes);
 
+                    Instant insertStart = Instant.now();
+
                     executorResolver
                             .resolve(targetDb)
                             .insertBatch(txJdbc, tableName, columns, values);
 
+                    Instant insertEnd = Instant.now();
+
                     int rows = resp.getData().size();
                     totalRows += rows;
 
-                    System.out.println("Batch " + batchNo++ + " | Rows inserted = " + rows);
+                    log("DB INSERT", insertBatchNo++, insertStart, insertEnd, rows);
                 }
 
                 if (resp.getNextUri() == null ||
                         "FINISHED".equalsIgnoreCase(resp.getStats().getState())) {
                     break;
                 }
+
+                Instant fetchStart = Instant.now();
                 resp = trinoExecutor.getNextPage(resp.getNextUri());
+                Instant fetchEnd = Instant.now();
+
+                log("TRINO FETCH", fetchBatchNo++,
+                        fetchStart, fetchEnd,
+                        resp.getData() == null ? 0 : resp.getData().size());
             }
 
             conn.commit();
-            Instant endTime = Instant.now();
-            Duration duration = Duration.between(startTime, endTime);
 
-            long minutes = duration.toMinutes();
-            long seconds = duration.minusMinutes(minutes).getSeconds();
+            Instant jobEnd = Instant.now();
+            Duration total = Duration.between(jobStart, jobEnd);
 
-            System.out.println("Start Time  : " + format(startTime));
-            System.out.println("End Time    : " + format(endTime));
-            System.out.println("Total Time  : " + minutes + " min " + seconds + " sec");
+            System.out.println("Job Start   : " + format(jobStart));
+            System.out.println("Job End     : " + format(jobEnd));
+            System.out.println("Total Time  : " +
+                    total.toMinutes() + " min " +
+                    total.minusMinutes(total.toMinutes()).getSeconds() + " sec");
             System.out.println("Total Rows  : " + totalRows);
-            System.out.println("Total rows inserted = " + totalRows);
             return "FINISHED. Rows inserted = " + totalRows;
 
         } catch (Exception ex) {
 
-            if (conn != null) {
-                conn.rollback();
-            }
+            if (conn != null) conn.rollback();
 
             if (tableCreated) {
                 DbUtils.dropTableQuietly(
@@ -128,16 +143,31 @@ public class TrinoBatchService {
                 );
             }
 
-            System.out.println(ex.getMessage());
+            throw ex;
 
         } finally {
-
             if (conn != null) {
                 conn.setAutoCommit(true);
                 conn.close();
             }
         }
-        return "Finished : " + totalRows ;
+    }
+
+    private void log(
+            String label,
+            int batch,
+            Instant start,
+            Instant end,
+            int rows
+    ) {
+        System.out.println(
+                label + " Batch " + batch +
+                        " | Start = " + format(start) +
+                        " | End = " + format(end) +
+                        " | Time = " +
+                        Duration.between(start, end).toMillis() + " ms" +
+                        " | Rows = " + rows
+        );
     }
 
     private String buildColumnBlock(
@@ -145,10 +175,8 @@ public class TrinoBatchService {
             List<Integer> includedIndexes
     ) {
         return includedIndexes.stream()
-                .map(i -> quoteColumn(resp.getColumns()
-                        .get(i)
-                        .get("name")
-                        .toString()))
+                .map(i -> quoteColumn(
+                        resp.getColumns().get(i).get("name").toString()))
                 .reduce((a, b) -> a + "," + b)
                 .orElse("");
     }
@@ -179,54 +207,34 @@ public class TrinoBatchService {
         return sb.toString();
     }
 
-
-    private String format(Instant time) {
-        return DateTimeFormatter
-                .ofPattern("yyyy-MM-dd HH:mm:ss")
-                .withZone(ZoneId.systemDefault())
-                .format(time);
-    }
-
     private List<Integer> filterColumns(TrinoResponseBean resp) {
 
-        List<Integer> includedIndexes = new ArrayList<>();
+        List<Integer> included = new ArrayList<>();
 
         for (int i = 0; i < resp.getColumns().size(); i++) {
-            String colName = resp.getColumns().get(i)
-                    .get("name")
-                    .toString()
-                    .toLowerCase();
-
-            if (!EXCLUDED_COLUMNS.contains(colName)) {
-                includedIndexes.add(i);
-            }
+            String col =
+                    resp.getColumns().get(i).get("name").toString().toLowerCase();
+            if (!EXCLUDED_COLUMNS.contains(col)) included.add(i);
         }
 
-        return includedIndexes;
+        return included;
     }
-
 
     private String toOracleSqlValue(Object v) {
 
         if (v == null) return "NULL";
 
-        if (v instanceof Boolean b) {
-            return b ? "1" : "0";
-        }
+        if (v instanceof Boolean b) return b ? "1" : "0";
 
-        if (v instanceof Number) {
-            return v.toString();
-        }
+        if (v instanceof Number) return v.toString();
 
         String s = v.toString().replace("'", "''");
 
-        if (s.matches("\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?")) {
+        if (s.matches("\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?"))
             return "TIMESTAMP '" + s.replace("T", " ") + "'";
-        }
 
-        if (s.matches("\\d{4}-\\d{2}-\\d{2}")) {
+        if (s.matches("\\d{4}-\\d{2}-\\d{2}"))
             return "DATE '" + s + "'";
-        }
 
         return "'" + s + "'";
     }
@@ -236,15 +244,12 @@ public class TrinoBatchService {
         if (v == null) return "NULL";
 
         if (v instanceof Boolean b) {
-            if ("postgres".equalsIgnoreCase(targetDb)) {
+            if ("postgres".equalsIgnoreCase(targetDb))
                 return b ? "TRUE" : "FALSE";
-            }
             return b ? "1" : "0";
         }
 
-        if (v instanceof Number) {
-            return v.toString();
-        }
+        if (v instanceof Number) return v.toString();
 
         return "'" + v.toString().replace("'", "''") + "'";
     }
@@ -260,6 +265,14 @@ public class TrinoBatchService {
     private String extractTableName(String query) {
         String q = query.replaceAll("\\s+", " ").trim();
         String from = q.substring(q.toLowerCase().indexOf(" from ") + 6);
-        return from.split("\\s+")[0].split("\\.")[from.split("\\.").length - 1];
+        return from.split("\\s+")[0]
+                .split("\\.")[from.split("\\.").length - 1];
+    }
+
+    private String format(Instant t) {
+        return DateTimeFormatter
+                .ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(ZoneId.systemDefault())
+                .format(t);
     }
 }
